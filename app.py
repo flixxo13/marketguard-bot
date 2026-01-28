@@ -3,74 +3,59 @@ import yfinance as yf
 import pandas as pd
 from textblob import TextBlob
 
-# Konfiguration der Web-App
+# 1. Seite konfigurieren
 st.set_page_config(page_title="MarketGuard AI", page_icon="📈", layout="wide")
 
-# Styling für mobiles Design
-st.markdown("""
-    <style>
-    .main { background-color: #0e1117; color: white; }
-    div[data-testid="stMetricValue"] { font-size: 1.8rem; }
-    </style>
-    """, unsafe_allow_stdio=True)
-
+# 2. Titel und Header
 st.title("🚀 MarketGuard AI Dashboard")
-st.write("Live-Überwachung deiner Favoriten (Stand: 2026)")
+st.markdown("---")
 
-# Deine Aktienliste
+# 3. Deine Aktienliste
 ticker_list = ["NVDA", "AAPL", "TSLA", "MSFT", "SAP.DE"]
 
-# Funktion für Datenabruf mit Fehlerbehandlung
-def get_stock_info(symbol):
+# 4. Funktion zum Datenabruf
+def get_data(symbol):
     try:
         ticker = yf.Ticker(symbol)
-        # Wir holen 7 Tage, um Lücken am frühen Morgen oder Wochenende zu überbrücken
-        df = ticker.history(period="7d")
-        if df.empty:
-            return None
+        # Holt die letzten 5 Tage für stabilere Daten
+        df = ticker.history(period="5d")
+        if df.empty: return None
         
-        # News für Sentiment-Analyse abrufen
+        # Einfaches Sentiment aus News
         news = ticker.news
-        sentiment_score = 0
+        sentiment = "⚪ Neutral"
         if news:
-            analysis = TextBlob(news[0]['title']).sentiment.polarity
-            sentiment_score = analysis
+            polarity = TextBlob(news[0]['title']).sentiment.polarity
+            if polarity > 0.1: sentiment = "🟢 Positiv"
+            elif polarity < -0.1: sentiment = "🔴 Negativ"
             
         return {
             "price": df['Close'].iloc[-1],
-            "prev_price": df['Close'].iloc[-2],
+            "change": ((df['Close'].iloc[-1] - df['Close'].iloc[-2]) / df['Close'].iloc[-2]) * 100,
             "history": df['Close'],
-            "sentiment": sentiment_score
+            "sentiment": sentiment
         }
     except:
         return None
 
-# Dashboard-Layout (2 Spalten auf dem Desktop, untereinander am Handy)
+# 5. Dashboard-Raster erstellen
 cols = st.columns(2)
 
 for i, ticker in enumerate(ticker_list):
-    info = get_stock_info(ticker)
+    data = get_data(ticker)
     with cols[i % 2]:
         with st.container(border=True):
-            if info:
-                # Berechnung der Veränderung
-                diff = info["price"] - info["prev_price"]
-                percent = (diff / info["prev_price"]) * 100
-                
-                # Sentiment-Icon
-                s_icon = "🟢" if info["sentiment"] > 0.1 else "🔴" if info["sentiment"] < -0.1 else "⚪"
-                
-                # Anzeige der Werte
+            if data:
+                # Preis-Anzeige
                 st.metric(
-                    label=f"{s_icon} {ticker}", 
-                    value=f"{info['price']:.2f} €", 
-                    delta=f"{percent:.2f}%"
+                    label=f"{ticker} ({data['sentiment']})", 
+                    value=f"{data['price']:.2f} €", 
+                    delta=f"{data['change']:.2f}%"
                 )
-                
-                # Kleiner Trend-Chart
-                st.line_chart(info["history"], height=150)
+                # Kleiner Chart
+                st.line_chart(data['history'], height=150)
             else:
-                st.error(f"Daten für {ticker} aktuell nicht verfügbar.")
+                st.error(f"Daten für {ticker} nicht verfügbar.")
 
-st.divider()
-st.info("💡 Tipp: Tippe im Browser auf die 3 Punkte und wähle 'Zum Startbildschirm hinzufügen', um diese App auf deinem Handy zu installieren.")
+st.markdown("---")
+st.caption("Datenquelle: Yahoo Finance | Stand: 2026")
