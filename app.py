@@ -1,90 +1,76 @@
-import sys
-import time
-import requests
-# Fix für Pydroid 3
-sys.modules['curl_cffi'] = None 
-
-import telebot
+import streamlit as st
 import yfinance as yf
+import pandas as pd
 from textblob import TextBlob
 
-# --- DEINE DATEN ---
-TOKEN = "8525741494:AAHI_t0CjlelRFQWKMDH4ISprI1Ccwaz54c"
-CHAT_ID = "2056047495"
-mein_depot = ["NVDA", "AAPL", "SAP.DE", "TSLA", "MSFT"]
+# Konfiguration der Web-App
+st.set_page_config(page_title="MarketGuard AI", page_icon="📈", layout="wide")
 
-bot = telebot.TeleBot(TOKEN)
+# Styling für mobiles Design
+st.markdown("""
+    <style>
+    .main { background-color: #0e1117; color: white; }
+    div[data-testid="stMetricValue"] { font-size: 1.8rem; }
+    </style>
+    """, unsafe_allow_stdio=True)
 
-# --- DER TRICK: Wir geben uns als Browser aus ---
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-})
+st.title("🚀 MarketGuard AI Dashboard")
+st.write("Live-Überwachung deiner Favoriten (Stand: 2026)")
 
-def get_market_data():
-    report = "📊 *MarketGuard Live-Check*\n"
-    report += "----------------------------\n"
-    
-    for symbol in mein_depot:
-        try:
-            # Wir nutzen die Session mit dem Browser-Header
-            ticker = yf.Ticker(symbol, session=session)
-            # Wir fragen die letzten 7 Tage ab, um Lücken am Morgen zu füllen
-            data = ticker.history(period="7d", interval="1d")
+# Deine Aktienliste
+ticker_list = ["NVDA", "AAPL", "TSLA", "MSFT", "SAP.DE"]
+
+# Funktion für Datenabruf mit Fehlerbehandlung
+def get_stock_info(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        # Wir holen 7 Tage, um Lücken am frühen Morgen oder Wochenende zu überbrücken
+        df = ticker.history(period="7d")
+        if df.empty:
+            return None
+        
+        # News für Sentiment-Analyse abrufen
+        news = ticker.news
+        sentiment_score = 0
+        if news:
+            analysis = TextBlob(news[0]['title']).sentiment.polarity
+            sentiment_score = analysis
             
-            if not data.empty:
-                last_price = data['Close'].iloc[-1]
-                # Kurs vom Vortag für die %-Berechnung
-                prev_price = data['Close'].iloc[-2] if len(data) > 1 else last_price
-                change = ((last_price - prev_price) / prev_price) * 100
+        return {
+            "price": df['Close'].iloc[-1],
+            "prev_price": df['Close'].iloc[-2],
+            "history": df['Close'],
+            "sentiment": sentiment_score
+        }
+    except:
+        return None
+
+# Dashboard-Layout (2 Spalten auf dem Desktop, untereinander am Handy)
+cols = st.columns(2)
+
+for i, ticker in enumerate(ticker_list):
+    info = get_stock_info(ticker)
+    with cols[i % 2]:
+        with st.container(border=True):
+            if info:
+                # Berechnung der Veränderung
+                diff = info["price"] - info["prev_price"]
+                percent = (diff / info["prev_price"]) * 100
                 
-                # News Sentiment (sehr simpel gehalten)
-                sentiment_icon = "⚪"
-                try:
-                    news = ticker.news
-                    if news:
-                        analysis = TextBlob(news[0]['title']).sentiment.polarity
-                        if analysis > 0.1: sentiment_icon = "🟢"
-                        elif analysis < -0.1: sentiment_icon = "🔴"
-                except: pass
+                # Sentiment-Icon
+                s_icon = "🟢" if info["sentiment"] > 0.1 else "🔴" if info["sentiment"] < -0.1 else "⚪"
                 
-                trend = "📈" if change >= 0 else "📉"
-                report += f"{sentiment_icon} *{symbol}*: {last_price:.2f} ({change:+.2f}%)\n"
+                # Anzeige der Werte
+                st.metric(
+                    label=f"{s_icon} {ticker}", 
+                    value=f"{info['price']:.2f} €", 
+                    delta=f"{percent:.2f}%"
+                )
+                
+                # Kleiner Trend-Chart
+                st.line_chart(info["history"], height=150)
             else:
-                report += f"⚪ *{symbol}*: Derzeit keine Daten\n"
-            
-            # 2 Sekunden warten, um nicht aufzufallen
-            time.sleep(2)
-            
-        except Exception as e:
-            report += f"⚠️ *{symbol}*: API-Pause...\n"
-            print(f"Fehler: {e}")
-            
-    return report
+                st.error(f"Daten für {ticker} aktuell nicht verfügbar.")
 
-# --- BEFEHLE ---
-
-@bot.message_handler(commands=['start'])
-def welcome(message):
-    bot.send_message(CHAT_ID, "Bot aktiv! Schreib 'check' für deine Kurse.")
-
-@bot.message_handler(func=lambda message: True)
-def handle_all(message):
-    text = message.text.lower()
-    
-    if "check" in text:
-        bot.send_message(CHAT_ID, "⏳ Ich frage die Kurse ab (Browser-Modus)...")
-        try:
-            msg = get_market_data()
-            bot.send_message(CHAT_ID, msg, parse_mode="Markdown")
-        except Exception as e:
-            bot.send_message(CHAT_ID, "Fehler beim Abruf. Bitte IP wechseln (Flugmodus).")
-            print(f"Fehler: {e}")
-            
-    elif "list" in text:
-        bot.send_message(CHAT_ID, f"📋 Deine Liste: {', '.join(mein_depot)}")
-
-if __name__ == "__main__":
-    print("--- Bot läuft (Browser-Simulation aktiv) ---")
-    bot.infinity_polling()
-
+st.divider()
+st.info("💡 Tipp: Tippe im Browser auf die 3 Punkte und wähle 'Zum Startbildschirm hinzufügen', um diese App auf deinem Handy zu installieren.")
